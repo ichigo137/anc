@@ -145,34 +145,31 @@ class SpeechEnhancementDataset(Dataset):
         clean_mag = np.abs(clean_stft)
 
         # ----------------------------------------------------
-        # Normalize using noisy magnitude scale
+        # Log-magnitude representation
         # ----------------------------------------------------
 
-        scale = noisy_mag.max() + 1e-8
+        noisy_log = np.log1p(noisy_mag)
+        clean_log = np.log1p(clean_mag)
 
-        noisy_mag = noisy_mag / scale
-        clean_mag = clean_mag / scale
+        # Normalize both using the noisy recording scale
+        scale = np.max(noisy_log) + 1e-8
+
+        noisy_log = noisy_log / scale
+        clean_log = clean_log / scale
 
         # ----------------------------------------------------
-        # Ideal Ratio Mask
+        # Ideal ratio mask
         # ----------------------------------------------------
 
-        mask = clean_mag / (noisy_mag + 1e-8)
-
-        mask = np.clip(
-            mask,
-            0.0,
-            1.0
-        )
+        mask = clean_log / (noisy_log + 1e-8)
+        mask = np.clip(mask, 0.0, 1.0)
 
         # ----------------------------------------------------
         # Convert to tensors
-        #
-        # [channel, frequency, time]
         # ----------------------------------------------------
 
         noisy_tensor = torch.tensor(
-            noisy_mag,
+            noisy_log,
             dtype=torch.float32
         ).unsqueeze(0)
 
@@ -182,13 +179,11 @@ class SpeechEnhancementDataset(Dataset):
         ).unsqueeze(0)
 
         clean_tensor = torch.tensor(
-            clean_mag,
+            clean_log,
             dtype=torch.float32
         ).unsqueeze(0)
 
         return noisy_tensor, mask_tensor, clean_tensor
-
-
 # ============================================================
 # Neural Network
 # ============================================================

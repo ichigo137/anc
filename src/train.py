@@ -61,6 +61,9 @@ class SpeechEnhancementDataset(Dataset):
     def __getitem__(self, index):
 
         noisy_path = self.noisy_files[index]
+        snr_text = noisy_path.stem.split("__snr")[-1]
+        snr_value = float(snr_text)
+        
 
         # Example:
         # speech_001__hum__snr-5.wav
@@ -182,8 +185,12 @@ class SpeechEnhancementDataset(Dataset):
             clean_log,
             dtype=torch.float32
         ).unsqueeze(0)
-
-        return noisy_tensor, mask_tensor, clean_tensor
+        return (
+            noisy_tensor,
+            mask_tensor,
+            clean_tensor,
+            torch.tensor(snr_value, dtype=torch.float32)
+        )
 # ============================================================
 # Neural Network
 # ============================================================
@@ -359,6 +366,16 @@ print("Starting training...")
 print()
 
 
+# ============================================================
+# Training
+# ============================================================
+
+best_val_loss = float("inf")
+
+print("Starting training...")
+print()
+
+
 for epoch in range(EPOCHS):
 
     # --------------------------------------------------------
@@ -369,11 +386,12 @@ for epoch in range(EPOCHS):
 
     train_loss = 0.0
 
-    for noisy, target_mask, clean_mag in train_loader:
+    for noisy, target_mask, clean_mag, snr in train_loader:
 
         noisy = noisy.to(DEVICE)
         target_mask = target_mask.to(DEVICE)
         clean_mag = clean_mag.to(DEVICE)
+        snr = snr.to(DEVICE)
 
         optimizer.zero_grad()
 
@@ -382,23 +400,55 @@ for epoch in range(EPOCHS):
         # Reconstruct estimated clean magnitude
         predicted_clean_mag = predicted_mask * noisy
 
+        # ----------------------------------------------------
         # Mask prediction loss
+        # ----------------------------------------------------
+
         mask_loss = criterion(
             predicted_mask,
             target_mask
         )
 
+        # ----------------------------------------------------
         # Speech reconstruction loss
+        # ----------------------------------------------------
+
         magnitude_loss = torch.mean(
             torch.abs(
                 predicted_clean_mag - clean_mag
             )
         )
 
-        # Combined loss
+        # ----------------------------------------------------
+        # High-SNR identity penalty
+        #
+        # At high SNR, encourage the model to leave
+        # already-clean speech alone.
+        # ----------------------------------------------------
+
+        high_snr_weight = torch.clamp(
+            (snr - 10.0) / 10.0,
+            min=0.0,
+            max=1.0
+        )
+
+        identity_loss_per_sample = torch.mean(
+            (predicted_mask - 1.0) ** 2,
+            dim=(1, 2, 3)
+        )
+
+        identity_loss = torch.mean(
+            high_snr_weight * identity_loss_per_sample
+        )
+
+        # ----------------------------------------------------
+        # Combined V3 loss
+        # ----------------------------------------------------
+
         loss = (
-            0.2 * mask_loss
-            + 0.8 * magnitude_loss
+            0.20 * mask_loss
+            + 0.75 * magnitude_loss
+            + 0.05 * identity_loss
         )
 
         loss.backward()
@@ -420,11 +470,12 @@ for epoch in range(EPOCHS):
 
     with torch.no_grad():
 
-        for noisy, target_mask, clean_mag in val_loader:
+        for noisy, target_mask, clean_mag, snr in val_loader:
 
             noisy = noisy.to(DEVICE)
             target_mask = target_mask.to(DEVICE)
             clean_mag = clean_mag.to(DEVICE)
+            snr = snr.to(DEVICE)
 
             predicted_mask = model(noisy)
 
@@ -432,10 +483,18 @@ for epoch in range(EPOCHS):
                 predicted_mask * noisy
             )
 
+            # ------------------------------------------------
+            # Mask loss
+            # ------------------------------------------------
+
             mask_loss = criterion(
                 predicted_mask,
                 target_mask
             )
+
+            # ------------------------------------------------
+            # Magnitude reconstruction loss
+            # ------------------------------------------------
 
             magnitude_loss = torch.mean(
                 torch.abs(
@@ -443,9 +502,33 @@ for epoch in range(EPOCHS):
                 )
             )
 
+            # ------------------------------------------------
+            # High-SNR identity penalty
+            # ------------------------------------------------
+
+            high_snr_weight = torch.clamp(
+                (snr - 10.0) / 10.0,
+                min=0.0,
+                max=1.0
+            )
+
+            identity_loss_per_sample = torch.mean(
+                (predicted_mask - 1.0) ** 2,
+                dim=(1, 2, 3)
+            )
+
+            identity_loss = torch.mean(
+                high_snr_weight * identity_loss_per_sample
+            )
+
+            # ------------------------------------------------
+            # Combined validation loss
+            # ------------------------------------------------
+
             loss = (
-                0.2 * mask_loss
-                + 0.8 * magnitude_loss
+                0.20 * mask_loss
+                + 0.75 * magnitude_loss
+                + 0.05 * identity_loss
             )
 
             val_loss += loss.item()
@@ -489,11 +572,6 @@ for epoch in range(EPOCHS):
 
             MODEL_DIR / "tiny_enhancer.pt"
         )
-
-
-# ============================================================
-# Complete
-# ============================================================
 
 print()
 

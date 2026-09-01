@@ -80,7 +80,6 @@ class TinyEnhancer(nn.Module):
         )
 
     def forward(self, x):
-
         return self.network(x)
 
 
@@ -117,6 +116,16 @@ def enhance_audio(input_path, output_path):
     hop_length = checkpoint["hop_length"]
     win_length = checkpoint["win_length"]
 
+    chunk_seconds = checkpoint.get(
+        "chunk_seconds",
+        4
+    )
+
+    chunk_samples = sr * chunk_seconds
+
+    print(f"Sample rate: {sr}")
+    print(f"Chunk size: {chunk_seconds}s")
+
     # --------------------------------------------------------
     # Load audio
     # --------------------------------------------------------
@@ -127,87 +136,193 @@ def enhance_audio(input_path, output_path):
         mono=True
     )
 
-    # --------------------------------------------------------
-    # STFT
-    # --------------------------------------------------------
+    original_length = len(audio)
 
-    stft = librosa.stft(
-        audio,
-        n_fft=n_fft,
-        hop_length=hop_length,
-        win_length=win_length
-    )
-
-    magnitude = np.abs(stft)
-    phase = np.angle(stft)
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # Match the normalization used during training.
-    # --------------------------------------------------------
-
-    scale = magnitude.max() + 1e-8
-
-    normalized_magnitude = (
-        magnitude / scale
+    print(
+        f"Input duration: "
+        f"{original_length / sr:.2f} seconds"
     )
 
     # --------------------------------------------------------
-    # Prepare tensor
+    # Process audio in the same 4-second chunks used
+    # during training.
     # --------------------------------------------------------
 
-    noisy_tensor = torch.tensor(
-        normalized_magnitude,
-        dtype=torch.float32
-    ).unsqueeze(0).unsqueeze(0)
+    enhanced_chunks = []
 
-    noisy_tensor = noisy_tensor.to(DEVICE)
+    num_chunks = int(
+        np.ceil(
+            len(audio) / chunk_samples
+        )
+    )
 
-    # --------------------------------------------------------
-    # Neural network
-    # --------------------------------------------------------
+    print(f"Processing chunks: {num_chunks}")
 
-    with torch.no_grad():
+    for chunk_index in range(num_chunks):
 
-        predicted_mask = model(
-            noisy_tensor
+        start = chunk_index * chunk_samples
+        end = min(
+            start + chunk_samples,
+            len(audio)
         )
 
-    mask = (
-        predicted_mask
-        .squeeze()
-        .cpu()
-        .numpy()
+        chunk = audio[start:end]
+
+        actual_length = len(chunk)
+
+        # Pad final chunk
+        if actual_length < chunk_samples:
+
+            chunk = np.pad(
+                chunk,
+                (0, chunk_samples - actual_length)
+            )
+
+        # ----------------------------------------------------
+        # STFT
+        # ----------------------------------------------------
+
+        stft = librosa.stft(
+            chunk,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length
+        )
+
+        magnitude = np.abs(stft)
+        phase = np.angle(stft)
+
+        # ----------------------------------------------------
+        # MATCH TRAINING:
+        #
+        # magnitude
+        #    ↓
+        # log1p
+        #    ↓
+        # normalize
+        # ----------------------------------------------------
+
+        noisy_log = np.log1p(
+            magnitude
+        )
+
+        scale = (
+            np.max(noisy_log)
+            + 1e-8
+        )
+
+        normalized_noisy = (
+            noisy_log / scale
+        )
+
+        # ----------------------------------------------------
+        # Prepare tensor
+        # ----------------------------------------------------
+
+        noisy_tensor = torch.tensor(
+            normalized_noisy,
+            dtype=torch.float32
+        ).unsqueeze(0).unsqueeze(0)
+
+        noisy_tensor = noisy_tensor.to(
+            DEVICE
+        )
+
+        # ----------------------------------------------------
+        # Neural network
+        # ----------------------------------------------------
+
+        with torch.no_grad():
+
+            predicted_mask = model(
+                noisy_tensor
+            )
+
+        mask = (
+            predicted_mask
+            .squeeze()
+            .cpu()
+            .numpy()
+        )
+
+        # ----------------------------------------------------
+        # Reconstruct CLEAN LOG magnitude
+        #
+        # During training:
+        #
+        # clean_log / noisy_log = target mask
+        #
+        # Therefore:
+        #
+        # predicted clean log =
+        # predicted mask * noisy log
+        # ----------------------------------------------------
+
+        estimated_clean_log = (
+            mask * noisy_log
+        )
+
+        # ----------------------------------------------------
+        # Undo log1p
+        #
+        # log1p(x) = log(1 + x)
+        #
+        # inverse = expm1(x)
+        # ----------------------------------------------------
+
+        enhanced_magnitude = np.expm1(
+            estimated_clean_log
+        )
+
+        # ----------------------------------------------------
+        # Reconstruct complex STFT
+        # ----------------------------------------------------
+
+        enhanced_stft = (
+            enhanced_magnitude
+            * np.exp(1j * phase)
+        )
+
+        # ----------------------------------------------------
+        # ISTFT
+        # ----------------------------------------------------
+
+        enhanced_chunk = librosa.istft(
+            enhanced_stft,
+            hop_length=hop_length,
+            win_length=win_length,
+            length=len(chunk)
+        )
+
+        # Remove padding from final chunk
+
+        enhanced_chunk = (
+            enhanced_chunk[:actual_length]
+        )
+
+        enhanced_chunks.append(
+            enhanced_chunk
+        )
+
+        print(
+            f"  Chunk "
+            f"{chunk_index + 1}/{num_chunks}"
+            f" complete"
+        )
+
+    # --------------------------------------------------------
+    # Join chunks
+    # --------------------------------------------------------
+
+    enhanced_audio = np.concatenate(
+        enhanced_chunks
     )
 
-    # --------------------------------------------------------
-    # Apply mask to ORIGINAL magnitude
-    #
-    # NOT the normalized magnitude.
-    # --------------------------------------------------------
+    # Make absolutely sure output length
+    # matches original input.
 
-    enhanced_magnitude = (
-        magnitude * mask
-    )
-
-    # --------------------------------------------------------
-    # Reconstruct complex STFT
-    # --------------------------------------------------------
-
-    enhanced_stft = (
-        enhanced_magnitude
-        * np.exp(1j * phase)
-    )
-
-    # --------------------------------------------------------
-    # ISTFT
-    # --------------------------------------------------------
-
-    enhanced_audio = librosa.istft(
-        enhanced_stft,
-        hop_length=hop_length,
-        win_length=win_length,
-        length=len(audio)
+    enhanced_audio = (
+        enhanced_audio[:original_length]
     )
 
     # --------------------------------------------------------
@@ -250,7 +365,9 @@ if __name__ == "__main__":
 
     if len(sys.argv) >= 2:
 
-        input_path = Path(sys.argv[1])
+        input_path = Path(
+            sys.argv[1]
+        )
 
     else:
 
@@ -258,13 +375,18 @@ if __name__ == "__main__":
 
     if len(sys.argv) >= 3:
 
-        output_path = Path(sys.argv[2])
+        output_path = Path(
+            sys.argv[2]
+        )
 
     else:
 
         output_path = (
             OUTPUT_DIR
-            / (input_path.stem + "_enhanced.wav")
+            / (
+                input_path.stem
+                + "_enhanced.wav"
+            )
         )
 
     enhance_audio(
@@ -273,4 +395,6 @@ if __name__ == "__main__":
     )
 
     print()
+    print("==============================")
     print("Enhancement complete!")
+    print("==============================")

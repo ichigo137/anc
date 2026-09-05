@@ -9,8 +9,7 @@ import torch.nn as nn
 
 
 ROOT = Path(__file__).resolve().parent.parent
-MODEL_PATH = ROOT / "models" / "tiny_enhancer_v3_controlled.pt"
-
+MODEL_PATH = ROOT / "models" / "tiny_enhancer_v3_2.pt"
 SR = 16000
 N_FFT = 512
 HOP_LENGTH = 128

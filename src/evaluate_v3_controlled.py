@@ -225,6 +225,24 @@ def parse_snr(filename):
         match.group(1)
     )
 
+def parse_noise_type(filename):
+    """
+    Extract noise type from filenames such as:
+
+        speech_001__white__snr-5.wav
+        speech_001__pink__snr10.wav
+        speech_001__hum__snr15.wav
+
+    Returns the middle filename field.
+    """
+
+    parts = Path(filename).stem.split("__")
+
+    if len(parts) >= 2:
+        return parts[1]
+
+    return "unknown"
+
 
 # ============================================================
 # Main evaluation
@@ -370,20 +388,25 @@ def main():
         )
 
         results.append(
-            {
-                "filename":
-                    noisy_path.name,
+    {
+        "filename":
+            noisy_path.name,
 
-                "nominal_snr":
-                    nominal_snr,
+        "noise_type":
+            parse_noise_type(
+                noisy_path.name
+            ),
 
-                "noisy":
-                    noisy_metrics,
+        "nominal_snr":
+            nominal_snr,
 
-                "enhanced":
-                    enhanced_metrics,
-            }
-        )
+        "noisy":
+            noisy_metrics,
+
+        "enhanced":
+            enhanced_metrics,
+    }
+)
 
         # ----------------------------------------------------
         # Print file result
@@ -553,6 +576,132 @@ def main():
             f"PESQ "
             f"{enhanced_pesq:.3f}"
         )
+
+        # ========================================================
+    # Results by noise type
+    # ========================================================
+
+    print()
+    print("=" * 78)
+    print("RESULTS BY NOISE TYPE")
+    print("=" * 78)
+
+    noise_types = sorted(
+        {
+            r["noise_type"]
+            for r in results
+        }
+    )
+
+    for noise_type in noise_types:
+
+        group = [
+            r
+            for r in results
+            if r["noise_type"] == noise_type
+        ]
+
+        if not group:
+            continue
+
+        noisy_snr = np.mean(
+            [
+                r["noisy"]["snr"]
+                for r in group
+            ]
+        )
+
+        enhanced_snr = np.mean(
+            [
+                r["enhanced"]["snr"]
+                for r in group
+            ]
+        )
+
+        noisy_si_sdr = np.mean(
+            [
+                r["noisy"]["si_sdr"]
+                for r in group
+            ]
+        )
+
+        enhanced_si_sdr = np.mean(
+            [
+                r["enhanced"]["si_sdr"]
+                for r in group
+            ]
+        )
+
+        noisy_stoi = np.mean(
+            [
+                r["noisy"]["stoi"]
+                for r in group
+            ]
+        )
+
+        enhanced_stoi = np.mean(
+            [
+                r["enhanced"]["stoi"]
+                for r in group
+            ]
+        )
+
+        noisy_pesq = np.nanmean(
+            [
+                r["noisy"]["pesq"]
+                for r in group
+            ]
+        )
+
+        enhanced_pesq = np.nanmean(
+            [
+                r["enhanced"]["pesq"]
+                for r in group
+            ]
+        )
+
+        print(
+            f"{noise_type:<15}"
+            f" | N={len(group):3d}"
+        )
+
+        print(
+            f"  SNR    : "
+            f"{noisy_snr:+.3f}"
+            f" -> "
+            f"{enhanced_snr:+.3f}"
+            f" "
+            f"({enhanced_snr - noisy_snr:+.3f})"
+        )
+
+        print(
+            f"  SI-SDR : "
+            f"{noisy_si_sdr:+.3f}"
+            f" -> "
+            f"{enhanced_si_sdr:+.3f}"
+            f" "
+            f"({enhanced_si_sdr - noisy_si_sdr:+.3f})"
+        )
+
+        print(
+            f"  STOI   : "
+            f"{noisy_stoi:.3f}"
+            f" -> "
+            f"{enhanced_stoi:.3f}"
+            f" "
+            f"({enhanced_stoi - noisy_stoi:+.3f})"
+        )
+
+        print(
+            f"  PESQ   : "
+            f"{noisy_pesq:.3f}"
+            f" -> "
+            f"{enhanced_pesq:.3f}"
+            f" "
+            f"({enhanced_pesq - noisy_pesq:+.3f})"
+        )
+
+        print()
 
 
     # ========================================================

@@ -19,7 +19,7 @@ CLEAN_DIR = ROOT / "dataset" / "clean"
 OUTPUT_DIR = ROOT / "output" / "evaluation"
 
 INFERENCE_SCRIPT = ROOT / "src" / "inference.py"
-
+MODEL_PATH = ROOT / "models" / "tiny_enhancer_v3_1.pt"
 OUTPUT_DIR.mkdir(
     parents=True,
     exist_ok=True
@@ -214,13 +214,14 @@ for i, noisy_path in enumerate(
     # --------------------------------------------------------
 
     subprocess.run(
-        [
-            sys.executable,
-            str(INFERENCE_SCRIPT),
-            str(noisy_path),
-            str(enhanced_path)
-        ],
-        check=True
+    [
+        sys.executable,
+        str(INFERENCE_SCRIPT),
+        str(noisy_path),
+        str(enhanced_path),
+        str(MODEL_PATH)
+    ],
+    check=True
     )
 
 

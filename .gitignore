@@ -33,3 +33,7 @@ build/
 # Temporary files
 *.tmp
 *.temp
+
+# Session logs & summary
+session-*.md
+RESULTS_SUMMARY.md

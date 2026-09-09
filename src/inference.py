@@ -87,8 +87,7 @@ class TinyEnhancer(nn.Module):
 # Enhancement
 # ============================================================
 
-def enhance_audio(input_path, output_path):
-
+def enhance_audio(input_path, output_path, model_path=None):
     print(f"Input : {input_path}")
     print(f"Output: {output_path}")
     print(f"Device: {DEVICE}")
@@ -97,11 +96,13 @@ def enhance_audio(input_path, output_path):
     # Load checkpoint
     # --------------------------------------------------------
 
+    if model_path is None:
+     model_path = MODEL_PATH
+
     checkpoint = torch.load(
-        MODEL_PATH,
-        map_location=DEVICE,
-        weights_only=False
-    )
+    model_path,
+    map_location=DEVICE
+)
 
     model = TinyEnhancer().to(DEVICE)
 
@@ -360,27 +361,16 @@ def enhance_audio(input_path, output_path):
 # ============================================================
 # Main
 # ============================================================
-
 if __name__ == "__main__":
 
     if len(sys.argv) >= 2:
-
-        input_path = Path(
-            sys.argv[1]
-        )
-
+        input_path = Path(sys.argv[1])
     else:
-
         input_path = DEFAULT_INPUT
 
     if len(sys.argv) >= 3:
-
-        output_path = Path(
-            sys.argv[2]
-        )
-
+        output_path = Path(sys.argv[2])
     else:
-
         output_path = (
             OUTPUT_DIR
             / (
@@ -389,12 +379,18 @@ if __name__ == "__main__":
             )
         )
 
+    if len(sys.argv) >= 4:
+        model_path = Path(sys.argv[3])
+    else:
+        model_path = None
+
     enhance_audio(
         input_path,
-        output_path
+        output_path,
+        model_path
     )
 
-    print()
-    print("==============================")
-    print("Enhancement complete!")
-    print("==============================")
+print()
+print("==============================")
+print("Enhancement complete!")
+print("==============================")
